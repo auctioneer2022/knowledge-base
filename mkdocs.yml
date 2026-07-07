@@ -1,0 +1,132 @@
+site_name: 众益会计专业知识库
+site_description: 四川众益会计师事务所专业知识库 - 审计、税务、咨询业务知识体系
+site_author: 四川众益会计师事务所
+site_url: https://auctioneer2022.github.io/knowledge-base/
+
+repo_name: auctioneer2022/knowledge-base
+repo_url: https://github.com/auctioneer2022/knowledge-base
+
+theme:
+  name: material
+  language: zh
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: 切换至深色模式
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: 切换至浅色模式
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.indexes
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+
+plugins:
+  - search:
+      lang: zh
+  - tags
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - toc:
+      permalink: true
+  - attr_list
+  - def_list
+
+nav:
+  - 首页: index.md
+  - 法律法规:
+    - 01-法律法规/index.md
+    - 会计法律:
+      - 01-法律法规/01-会计法律/index.md
+    - 公司商事法律:
+      - 01-法律法规/02-公司商事法律/index.md
+    - 合同与民事法律:
+      - 01-法律法规/03-合同与民事法律/index.md
+    - 劳动法律:
+      - 01-法律法规/04-劳动法律/index.md
+    - 其他相关法律:
+      - 01-法律法规/05-其他相关法律/index.md
+  - 会计准则:
+    - 02-会计准则/index.md
+    - 基本准则:
+      - 02-会计准则/01-基本准则/index.md
+    - 具体准则:
+      - 02-会计准则/02-具体准则/index.md
+    - 应用指南:
+      - 02-会计准则/03-应用指南/index.md
+    - 解释与补充:
+      - 02-会计准则/04-解释与补充/index.md
+    - 小企业准则:
+      - 02-会计准则/05-小企业准则/index.md
+    - 制度与规范:
+      - 02-会计准则/06-制度与规范/index.md
+  - 审计准则:
+    - 03-审计准则/index.md
+    - 审计准则:
+      - 03-审计准则/01-审计准则/index.md
+    - 审阅与其他准则:
+      - 03-审计准则/02-审阅与其他准则/index.md
+    - 职业道德与质量管控:
+      - 03-审计准则/03-职业道德与质量管控/index.md
+    - 应用指南与问题解答:
+      - 03-审计准则/04-应用指南与问题解答/index.md
+    - 监管规则:
+      - 03-审计准则/05-监管规则/index.md
+  - 税法法规:
+    - 04-税法法规/index.md
+    - 增值税:
+      - 04-税法法规/01-增值税/index.md
+    - 企业所得税:
+      - 04-税法法规/02-企业所得税/index.md
+    - 个人所得税:
+      - 04-税法法规/03-个人所得税/index.md
+    - 小税种:
+      - 04-税法法规/04-小税种/index.md
+    - 税收优惠:
+      - 04-税法法规/05-税收优惠/index.md
+    - 征管与稽查:
+      - 04-税法法规/06-征管与稽查/index.md
+    - 国际税收:
+      - 04-税法法规/07-国际税收/index.md
+  - 行业知识:
+    - 05-行业知识/index.md
+  - 实务模板:
+    - 06-实务模板/index.md
+  - 案例库:
+    - 07-案例库/index.md
+  - 工具方法:
+    - 08-工具方法/index.md
+  - 培训资源:
+    - 09-培训资源/index.md
+  - 元数据:
+    - 编码规则说明: 00-元数据/编码规则说明.md
+    - 知识分类索引: 00-元数据/知识分类索引.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/auctioneer2022/knowledge-base
+
+copyright: Copyright &copy; 2026 四川众益会计师事务所
