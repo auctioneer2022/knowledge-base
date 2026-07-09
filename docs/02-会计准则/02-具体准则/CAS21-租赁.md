@@ -2,7 +2,7 @@
 id: CAS-21-001
 category: 会计准则/具体准则
 doc_number: 财会〔2018〕35号
-effective_date: 2021-01-01
+effective_date: 2019-01-01
 status: 现行有效
 keywords: [租赁, 使用权资产, 租赁负债, 经营租赁, 融资租赁]
 ---
