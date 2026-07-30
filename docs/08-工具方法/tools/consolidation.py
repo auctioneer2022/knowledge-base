@@ -36,7 +36,7 @@ class OffsetEntry:
 def assess_consolidation_scope(
     direct_pct: float,
     indirect_pct: float = 0.0,
-    voting_pct: float = None,
+    voting_pct: float | None = None,
     substantive_control: bool = False,
 ) -> ToolResult:
     """合并范围判断（控制三要素：权力、可变回报、运用权力影响回报）。
@@ -78,8 +78,8 @@ def assess_consolidation_scope(
 
 
 def build_equity_offset(
-    parent_investment,
-    subsidiary_equity,
+    parent_investment: float,
+    subsidiary_equity: float,
     nci_ratio: float,
 ) -> ToolResult:
     """长期股权投资与所有者权益抵销分录构建。
@@ -127,7 +127,7 @@ def build_equity_offset(
     )
 
 
-def build_intercompany_payable_receivable(receivable, payable) -> ToolResult:
+def build_intercompany_payable_receivable(receivable: float, payable: float) -> ToolResult:
     """内部债权债务抵销（应收账款与应付账款等）。
 
     用途：抵销集团内部因交易形成的应收应付，避免重复计量。
@@ -161,7 +161,7 @@ def build_intercompany_payable_receivable(receivable, payable) -> ToolResult:
     )
 
 
-def build_intercompany_revenue_cost(revenue, cost, unsold_profit: float = 0.0) -> ToolResult:
+def build_intercompany_revenue_cost(revenue: float, cost: float, unsold_profit: float = 0.0) -> ToolResult:
     """内部交易收入成本及存货未实现损益抵销。
 
     用途：抵销内部销售收入与成本，并将未实现内部销售损益从存货中剔除。
@@ -198,7 +198,7 @@ def build_intercompany_revenue_cost(revenue, cost, unsold_profit: float = 0.0) -
     )
 
 
-def build_unrealized_profit(transfer_price, cost, unsold_ratio: float, nci_ratio: float = 0.0) -> ToolResult:
+def build_unrealized_profit(transfer_price: float, cost: float, unsold_ratio: float, nci_ratio: float = 0.0) -> ToolResult:
     """未实现内部销售损益计算与分摊。
 
     用途：计算集团内部货物买卖产生的未实现损益及其在母子公司间的分摊。

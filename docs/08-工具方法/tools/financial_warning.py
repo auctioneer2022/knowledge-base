@@ -7,7 +7,8 @@
 - Altman (1968) 原始 Z-Score，适用上市制造业：Z>2.99 安全；1.81~2.99 灰色；<1.81 危机。
 - Altman 修订 Z'（私营公司，权益用账面价值）：>2.90 安全；1.23~2.90 灰色；<1.23 危机。
 - Altman 修订 Z''（非制造私营）：>2.60 安全；1.10~2.60 灰色；<1.10 危机。
-- 周首华等 (1996) F 分数（中国样本拓展）：F>0.3346 安全；<0.3346 高风险。
+- 周首华等 (1996) F 分数（中国样本拓展）：F>0.0274 安全（0.0274±0.0775 为不确定区）；
+  扩展样本应用亦常取 0.3346 为临界值（详见 :func:`assess_f_score`）。
 
 变量约定：
 - X1 = 营运资金 / 总资产
@@ -15,23 +16,27 @@
 - X3 = 息税前利润(EBIT) / 总资产
 - X4 = 权益市值(或账面价值) / 总负债
 - X5 = 销售收入 / 总资产（Z'' 不使用）
+
+边界说明：当总负债为 0 时 X4 趋于无穷，Z 值不可直接计算；此时各 ``calc_*`` 函数返回
+``value=None`` 并写入 ``warnings``，调用方应转为定性判断，避免拿到非有限值继续参与运算。
 """
 
 from __future__ import annotations
 
+import math
 from typing import Literal
 
 from .base import ToolResult, ToolValidationError, require_number, require_positive, require_non_negative
 
 
 def _compute_ratios(
-    working_capital,
-    retained_earnings,
-    ebit,
-    sales,
-    total_assets,
-    equity_measure,
-    total_liabilities,
+    working_capital: float,
+    retained_earnings: float,
+    ebit: float,
+    sales: float,
+    total_assets: float,
+    equity_measure: float,
+    total_liabilities: float,
     include_sales: bool,
 ):
     """计算 X1~X5 比率，统一做参数校验。
@@ -60,14 +65,30 @@ def _compute_ratios(
     return {"X1": x1, "X2": x2, "X3": x3, "X4": x4, "X5": x5, "warnings": warnings}
 
 
+def _none_result(method_name: str, notes: str, x: dict, r: dict, inputs: dict) -> ToolResult:
+    """X4 非有限时的统一返回（value=None + 预警），供三个 calc_altman_* 复用。"""
+    return ToolResult(
+        method_id="MTH-02-004",
+        method_name=method_name,
+        value=None,
+        inputs=inputs,
+        details=x,
+        warnings=r["warnings"] + [
+            "无负债主体下 X4（权益/负债）为无穷大，Z 值不可直接计算，模型失真，"
+            "建议结合现金流、行业对比等做定性判断。"
+        ],
+        notes=notes,
+    )
+
+
 def calc_altman_z(
-    working_capital,
-    retained_earnings,
-    ebit,
-    market_value_equity,
-    total_liabilities,
-    sales,
-    total_assets,
+    working_capital: float,
+    retained_earnings: float,
+    ebit: float,
+    market_value_equity: float,
+    total_liabilities: float,
+    sales: float,
+    total_assets: float,
 ) -> ToolResult:
     """Altman 原始 Z-Score（1968，上市制造业）。
 
@@ -83,13 +104,24 @@ def calc_altman_z(
         total_assets: 总资产（须 > 0）。
 
     Returns:
-        ToolResult: ``value``=Z 值；``details``=X1~X5；``notes``=阈值含义。
+        ToolResult: ``value``=Z 值（无负债主体为 ``None``）；``details``=X1~X5；``notes``=阈值含义。
     """
     r = _compute_ratios(
         working_capital, retained_earnings, ebit, sales, total_assets,
         market_value_equity, total_liabilities, include_sales=True,
     )
     x = {k: r[k] for k in ("X1", "X2", "X3", "X4", "X5")}
+    if not math.isfinite(x["X4"]):
+        return _none_result(
+            "Altman Z-Score(原始)",
+            "Z>2.99 安全区；1.81~2.99 灰色区；<1.81 危机区。适用上市制造业。",
+            x, r,
+            dict(
+                working_capital=working_capital, retained_earnings=retained_earnings,
+                ebit=ebit, market_value_equity=market_value_equity,
+                total_liabilities=total_liabilities, sales=sales, total_assets=total_assets,
+            ),
+        )
     z = 1.2 * x["X1"] + 1.4 * x["X2"] + 3.3 * x["X3"] + 0.6 * x["X4"] + 1.0 * x["X5"]
     return ToolResult(
         method_id="MTH-02-004",
@@ -107,13 +139,13 @@ def calc_altman_z(
 
 
 def calc_altman_z_private(
-    working_capital,
-    retained_earnings,
-    ebit,
-    book_value_equity,
-    total_liabilities,
-    sales,
-    total_assets,
+    working_capital: float,
+    retained_earnings: float,
+    ebit: float,
+    book_value_equity: float,
+    total_liabilities: float,
+    sales: float,
+    total_assets: float,
 ) -> ToolResult:
     """Altman 修订 Z'（私营公司，权益用账面价值）。
 
@@ -122,13 +154,24 @@ def calc_altman_z_private(
     Args: 同 :func:`calc_altman_z`，但 ``book_value_equity`` 为股东权益账面价值。
 
     Returns:
-        ToolResult: ``value``=Z' 值；``details``=X1~X5。
+        ToolResult: ``value``=Z' 值（无负债主体为 ``None``）；``details``=X1~X5。
     """
     r = _compute_ratios(
         working_capital, retained_earnings, ebit, sales, total_assets,
         book_value_equity, total_liabilities, include_sales=True,
     )
     x = {k: r[k] for k in ("X1", "X2", "X3", "X4", "X5")}
+    if not math.isfinite(x["X4"]):
+        return _none_result(
+            "Altman Z'-Score(私营)",
+            "Z'>2.90 安全区；1.23~2.90 灰色区；<1.23 危机区。适用非上市企业。",
+            x, r,
+            dict(
+                working_capital=working_capital, retained_earnings=retained_earnings,
+                ebit=ebit, book_value_equity=book_value_equity,
+                total_liabilities=total_liabilities, sales=sales, total_assets=total_assets,
+            ),
+        )
     z = 0.717 * x["X1"] + 0.847 * x["X2"] + 3.107 * x["X3"] + 0.420 * x["X4"] + 0.998 * x["X5"]
     return ToolResult(
         method_id="MTH-02-004",
@@ -146,12 +189,12 @@ def calc_altman_z_private(
 
 
 def calc_altman_z_nonmanufacturing(
-    working_capital,
-    retained_earnings,
-    ebit,
-    book_value_equity,
-    total_liabilities,
-    total_assets,
+    working_capital: float,
+    retained_earnings: float,
+    ebit: float,
+    book_value_equity: float,
+    total_liabilities: float,
+    total_assets: float,
 ) -> ToolResult:
     """Altman 修订 Z''（非制造业私营，剔除 X5）。
 
@@ -162,13 +205,24 @@ def calc_altman_z_nonmanufacturing(
         total_liabilities / total_assets: 含义同上，无需 ``sales``。
 
     Returns:
-        ToolResult: ``value``=Z'' 值；``details``=X1~X4。
+        ToolResult: ``value``=Z'' 值（无负债主体为 ``None``）；``details``=X1~X4。
     """
     r = _compute_ratios(
         working_capital, retained_earnings, ebit, 0, total_assets,
         book_value_equity, total_liabilities, include_sales=False,
     )
     x = {k: r[k] for k in ("X1", "X2", "X3", "X4")}
+    if not math.isfinite(x["X4"]):
+        return _none_result(
+            "Altman Z''-Score(非制造)",
+            "Z''>2.60 安全区；1.10~2.60 灰色区；<1.10 危机区。适用非制造业。",
+            x, r,
+            dict(
+                working_capital=working_capital, retained_earnings=retained_earnings,
+                ebit=ebit, book_value_equity=book_value_equity,
+                total_liabilities=total_liabilities, total_assets=total_assets,
+            ),
+        )
     z = 6.56 * x["X1"] + 3.26 * x["X2"] + 6.72 * x["X3"] + 1.05 * x["X4"]
     return ToolResult(
         method_id="MTH-02-004",
@@ -186,13 +240,13 @@ def calc_altman_z_nonmanufacturing(
 
 
 def calc_f_score(
-    working_capital,
-    retained_earnings,
-    ebit,
-    equity_market_value,
-    total_liabilities,
-    sales,
-    total_assets,
+    working_capital: float,
+    retained_earnings: float,
+    ebit: float,
+    equity_market_value: float,
+    total_liabilities: float,
+    sales: float,
+    total_assets: float,
 ) -> ToolResult:
     """周首华等 (1996) F 分数模型（中国样本拓展）。
 
@@ -203,13 +257,24 @@ def calc_f_score(
     Args: 同 :func:`calc_altman_z`，``equity_market_value`` 为股东权益市值。
 
     Returns:
-        ToolResult: ``value``=F 值；``details``=X1~X5。
+        ToolResult: ``value``=F 值（无负债主体为 ``None``）；``details``=X1~X5。
     """
     r = _compute_ratios(
         working_capital, retained_earnings, ebit, sales, total_assets,
         equity_market_value, total_liabilities, include_sales=True,
     )
     x = {k: r[k] for k in ("X1", "X2", "X3", "X4", "X5")}
+    if not math.isfinite(x["X4"]):
+        return _none_result(
+            "F-Score(周首华)",
+            "临界值 0.0274 安全（±0.0775 为不确定区）；扩展样本应用亦常取 0.3346。详见 assess_f_score。",
+            x, r,
+            dict(
+                working_capital=working_capital, retained_earnings=retained_earnings,
+                ebit=ebit, equity_market_value=equity_market_value,
+                total_liabilities=total_liabilities, sales=sales, total_assets=total_assets,
+            ),
+        )
     f = (
         -0.1774
         + 1.1091 * x["X1"]
@@ -229,7 +294,7 @@ def calc_f_score(
         ),
         details=x,
         warnings=r["warnings"],
-        notes="原研究临界值 F>0.0274 安全（0.0274±0.0775 为不确定区）；扩展样本应用亦常取 0.3346 为临界值，详见 assess_f_score。",
+        notes="临界值 0.0274 安全（±0.0775 为不确定区）；扩展样本应用亦常取 0.3346。详见 assess_f_score。",
     )
 
 
@@ -263,7 +328,7 @@ def assess_f_score(f_value: float, threshold: float = 0.0274) -> ToolResult:
         value=level,
         inputs=dict(f_value=f_value, threshold=threshold),
         details=dict(comparison=cmp, threshold=thr, band=(thr - 0.0775, thr + 0.0775)),
-        notes=f"临界值 {thr}；±0.0775 为不确定区（仅当 threshold=0.0274 时适用该带宽）。",
+        notes=f"临界值 {thr}；±0.0775 为不确定区（该带宽随 threshold 变化）。",
     )
 
 
@@ -277,7 +342,7 @@ def assess_warning(
 
     Args:
         model: 模型类型，取值 ``original`` / ``private`` / ``nonmanufacturing``。
-        z_value: 对应模型的 Z（或 Z'/Z''）值。
+        z_value: 对应模型的 Z（或 Z'/Z''）值；非有限值（无负债主体）按"安全"处理并预警。
 
     Returns:
         ToolResult: ``value``=风险等级（"安全"/"灰色"/"危机"/"未知"）；
@@ -293,11 +358,21 @@ def assess_warning(
             f"model 仅支持 {list(rules)}，收到：{model!r}"
         )
     low, high, label = rules[model]
-    z = require_number("z_value", z_value)
-    if z == float("inf"):
-        level = "安全"
-        cmp = "无负债 -> 偏向安全"
-    elif z > high:
+    try:
+        z = float(z_value)
+    except (TypeError, ValueError):
+        raise ToolValidationError(f"z_value 必须为数值，收到：{z_value!r}")
+    if math.isinf(z) or math.isnan(z):
+        return ToolResult(
+            method_id="MTH-02-004",
+            method_name="财务预警区间判定",
+            value="安全",
+            inputs=dict(model=model, z_value=z_value),
+            details=dict(lower=low, upper=high, label=label, comparison="非有限值（无负债主体），偏向安全"),
+            warnings=["Z 值为非有限（无负债主体），按安全处理；模型对无负债主体失真，建议结合其他指标定性判断。"],
+            notes=f"{label}模型阈值：安全>{high}；灰色[{low},{high}]；危机<{low}。非有限值按安全处理。",
+        )
+    if z > high:
         level = "安全"
         cmp = f"Z={z:.4f} > 上限 {high}"
     elif z >= low:
@@ -325,3 +400,10 @@ if __name__ == "__main__":
     )
     print(res.method_name, "=", res.value, "|", res.notes)
     print("区间：", assess_warning("original", res.value).value)
+    # 无负债主体：value 应为 None，而非 inf
+    none_res = calc_altman_z(
+        working_capital=1200, retained_earnings=800, ebit=600,
+        market_value_equity=5000, total_liabilities=0,
+        sales=9000, total_assets=10000,
+    )
+    print("无负债 Z value =", none_res.value, "| warnings =", none_res.warnings)

@@ -15,8 +15,11 @@ from __future__ import annotations
 
 from .base import ToolResult, ToolValidationError, require_number, require_positive, require_non_negative
 
+# 命名常量：WACC 权重合计容差（原为魔法数字 1e-6）
+WACC_WEIGHT_TOLERANCE = 1e-6
 
-def calc_capm(risk_free_rate, beta, market_risk_premium) -> ToolResult:
+
+def calc_capm(risk_free_rate: float, beta: float, market_risk_premium: float) -> ToolResult:
     """CAPM 股权资本成本：Ke = Rf + β·(Rm−Rf)。
 
     用途：测算股权投资者要求的必要报酬率，作为 DCF/WACC 的权益成本。
@@ -42,7 +45,13 @@ def calc_capm(risk_free_rate, beta, market_risk_premium) -> ToolResult:
     )
 
 
-def calc_wacc(weight_equity, cost_equity, weight_debt, cost_debt, tax_rate) -> ToolResult:
+def calc_wacc(
+    weight_equity: float,
+    cost_equity: float,
+    weight_debt: float,
+    cost_debt: float,
+    tax_rate: float,
+) -> ToolResult:
     """WACC 加权平均资本成本：WACC = We·Ke + Wd·Kd·(1−T)。
 
     用途：作为企业整体（含债权）的折现率。
@@ -68,7 +77,7 @@ def calc_wacc(weight_equity, cost_equity, weight_debt, cost_debt, tax_rate) -> T
         raise ToolValidationError("tax_rate 应在 [0,1]")
     wacc = we * ce + wd * cd * (1 - tr)
     warnings = []
-    if abs(we + wd - 1.0) > 1e-6:
+    if abs(we + wd - 1.0) > WACC_WEIGHT_TOLERANCE:
         warnings.append(f"权益权重+债务权重={we + wd:.4f} ≠ 1，已按给定权重直接计算（未归一化）。")
     return ToolResult(
         method_id="MTH-03-001",
@@ -81,7 +90,13 @@ def calc_wacc(weight_equity, cost_equity, weight_debt, cost_debt, tax_rate) -> T
     )
 
 
-def calc_dcf(free_cash_flows, discount_rate, terminal_value: float = 0.0, terminal_growth: float = None, terminal_year: int = None) -> ToolResult:
+def calc_dcf(
+    free_cash_flows: list[float],
+    discount_rate: float,
+    terminal_value: float = 0.0,
+    terminal_growth: float | None = None,
+    terminal_year: int | None = None,
+) -> ToolResult:
     """DCF 企业自由现金流折现。
 
     用途：将预测期各年企业自由现金流及终值折现，得到企业整体价值。
@@ -91,7 +106,7 @@ def calc_dcf(free_cash_flows, discount_rate, terminal_value: float = 0.0, termin
         discount_rate: 折现率（小数，通常取 WACC）。
         terminal_value: 直接给定终值（与 ``terminal_growth`` 二选一）。
         terminal_growth: 永续增长率（Gordon 模型：TV = FCF_n·(1+g)/(r−g)）。
-        terminal_year: 终值对应年份（默认最后一期）。
+        terminal_year: 终值对应年份（默认最后一期）。小于预测期会与后期现金流重复计数，自动按预测期末处理。
 
     Returns:
         ToolResult: ``value``=企业价值（现值合计）；
@@ -111,7 +126,15 @@ def calc_dcf(free_cash_flows, discount_rate, terminal_value: float = 0.0, termin
     for t, cf in enumerate(fcf, start=1):
         pv = cf / ((1 + r) ** t)
         pv_list.append(round(pv, 4))
+
     last_t = terminal_year if terminal_year is not None else len(fcf)
+    warnings = []
+    if terminal_year is not None and terminal_year < len(fcf):
+        warnings.append(
+            f"terminal_year={terminal_year} 小于预测期 {len(fcf)}，终值会与后期现金流重复计数，"
+            f"已按预测期末 {len(fcf)} 处理。"
+        )
+        last_t = len(fcf)
     if terminal_growth is not None:
         tv = fcf[-1] * (1 + terminal_growth) / (r - terminal_growth)
     else:
@@ -124,11 +147,12 @@ def calc_dcf(free_cash_flows, discount_rate, terminal_value: float = 0.0, termin
         value=round(total, 4),
         inputs=dict(free_cash_flows=free_cash_flows, discount_rate=discount_rate, terminal_value=terminal_value, terminal_growth=terminal_growth, terminal_year=terminal_year),
         details=dict(pv_periods=pv_list, terminal_value=round(tv, 4), pv_terminal=round(pv_terminal, 4)),
-        notes="TV 可由 Gordon 模型或外部给定；r 须 > g。",
+        warnings=warnings,
+        notes="TV 可由 Gordon 模型或外部给定；r 须 > g；终值默认落在预测期末。",
     )
 
 
-def calc_income_approach(net_operating_income, capitalization_rate) -> ToolResult:
+def calc_income_approach(net_operating_income: float, capitalization_rate: float) -> ToolResult:
     """收益法（资本化法）：V = NOI / r。
 
     用途：以稳定收益除以资本化率快速估算价值（适用于收益稳定的资产/企业）。
@@ -152,7 +176,7 @@ def calc_income_approach(net_operating_income, capitalization_rate) -> ToolResul
     )
 
 
-def calc_market_approach(target_metric, multiplier) -> ToolResult:
+def calc_market_approach(target_metric: float, multiplier: float) -> ToolResult:
     """市场法（乘数法）：V = 指标 × 乘数。
 
     用途：以可比交易/上市公司的财务乘数（P/E、P/B、EV/EBITDA 等）快速估算价值。
@@ -176,7 +200,7 @@ def calc_market_approach(target_metric, multiplier) -> ToolResult:
     )
 
 
-def calc_physical_depreciation(replacement_cost, age, total_life) -> ToolResult:
+def calc_physical_depreciation(replacement_cost: float, age: float, total_life: float) -> ToolResult:
     """实体性贬值速算（年限法）：贬值 = RC × 已使用年限 / 总使用年限。
 
     Args:
@@ -201,7 +225,7 @@ def calc_physical_depreciation(replacement_cost, age, total_life) -> ToolResult:
     )
 
 
-def calc_functional_obsolescence(excess_annual_cost, discount_rate, remaining_life) -> ToolResult:
+def calc_functional_obsolescence(excess_annual_cost: float, discount_rate: float, remaining_life: float) -> ToolResult:
     """功能性贬值速算：超额运营成本现值 = 年超额成本 × 年金现值系数。
 
     Args:
@@ -227,7 +251,7 @@ def calc_functional_obsolescence(excess_annual_cost, discount_rate, remaining_li
     )
 
 
-def calc_economic_obsolescence(replacement_cost, utilization_before, utilization_after) -> ToolResult:
+def calc_economic_obsolescence(replacement_cost: float, utilization_before: float, utilization_after: float) -> ToolResult:
     """经济性贬值速算：贬值 = RC × (1 − 利用率后 / 利用率前)。
 
     Args:
@@ -254,7 +278,7 @@ def calc_economic_obsolescence(replacement_cost, utilization_before, utilization
     )
 
 
-def calc_cost_approach(replacement_cost, physical_depr, functional_depr, economic_depr) -> ToolResult:
+def calc_cost_approach(replacement_cost: float, physical_depr: float, functional_depr: float, economic_depr: float) -> ToolResult:
     """成本法：评估值 = 重置成本 − 实体性 − 功能性 − 经济性贬值。
 
     Args:

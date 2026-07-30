@@ -22,6 +22,21 @@ from __future__ import annotations
 
 from .base import ToolResult, ToolValidationError, require_number, require_positive, require_non_negative
 
+# ---- 命名常量（原为魔法数字，便于调参与评审）----
+# 增值税税负率预警分界（相对预警值的比例）
+VAT_HIGH_RISK_RATIO = 0.7   # 实际税负率 < 预警值 * 0.7 → 高风险
+VAT_WATCH_RATIO = 0.9       # 实际税负率 < 预警值 * 0.9 → 关注
+# 企业所得税税负率相对基准的分界
+INCOME_TAX_HIGH_RISK_RATIO = 0.6
+# 发票风险扫描比率阈值
+INVOICE_HIGH_RATIO = 1.2    # 开票/收入比高于此 → 关注（虚增收入）
+INVOICE_LOW_RATIO = 0.3     # 开票/收入比低于此 → 关注（隐匿收入）
+TOP_AMOUNT_THRESHOLD = 0.8  # 顶额发票占比阈值
+# 税务健康度评分扣分
+SCORE_DEDUCT_HIGH = 25       # 高风险项扣分
+SCORE_DEDUCT_WATCH = 10      # 关注项扣分
+SCORE_DEDUCT_ADJ_MAX = 20.0  # 纳税调整得分项最高扣分
+
 # 增值税税负率行业预警参考值（示例，非官方发布，可参数覆盖）
 INDUSTRY_VAT_BENCHMARK = {
     "制造业": 0.035,
@@ -34,8 +49,11 @@ INDUSTRY_VAT_BENCHMARK = {
     "餐饮住宿": 0.020,
 }
 
+# 税务健康度等级白名单（防止错误输入被静默忽略）
+_VALID_LEVELS = {"正常", "关注", "高风险", "不适用", None}
 
-def calc_tax_burden_rate(tax_paid, revenue) -> ToolResult:
+
+def calc_tax_burden_rate(tax_paid: float, revenue: float) -> ToolResult:
     """税负率测算：税额 ÷ 销售收入。
 
     用途：衡量单位销售收入承担的税额，是税负率预警的基础指标。
@@ -60,7 +78,12 @@ def calc_tax_burden_rate(tax_paid, revenue) -> ToolResult:
     )
 
 
-def assess_vat_burden(vat_paid, revenue, benchmark=None, industry=None) -> ToolResult:
+def assess_vat_burden(
+    vat_paid: float,
+    revenue: float,
+    benchmark: float | None = None,
+    industry: str | None = None,
+) -> ToolResult:
     """增值税税负率预警。
 
     用途：将企业增值税税负率与行业预警值比较，显著偏低提示虚开发票/隐匿收入风险。
@@ -72,7 +95,7 @@ def assess_vat_burden(vat_paid, revenue, benchmark=None, industry=None) -> ToolR
         industry: 行业名称，用于匹配示例基准（与 ``benchmark`` 二选一/互补）。
 
     Returns:
-        ToolResult: ``value``=风险标记（"正常"/"关注"/"高风险"）；
+        ToolResult: ``value``=风险标记（"正常"/"关注"/"高风险"/"无法判定"）；
             ``details``=实际税负率、基准、偏离度。
     """
     rate_res = calc_tax_burden_rate(vat_paid, revenue)
@@ -92,12 +115,12 @@ def assess_vat_burden(vat_paid, revenue, benchmark=None, industry=None) -> ToolR
     bench = require_positive("benchmark", benchmark)
     deviation = (rate - bench) / bench if bench else 0.0
     warnings: list[str] = []
-    if rate < bench * 0.7:
+    if rate < bench * VAT_HIGH_RISK_RATIO:
         level = "高风险"
-        warnings.append(f"实际税负率 {rate:.4f} 低于预警值 {bench:.4f} 的 70%，存在隐匿收入或进项异常风险。")
-    elif rate < bench * 0.9:
+        warnings.append(f"实际税负率 {rate:.4f} 低于预警值 {bench:.4f} 的 {VAT_HIGH_RISK_RATIO:.0%}，存在隐匿收入或进项异常风险。")
+    elif rate < bench * VAT_WATCH_RATIO:
         level = "关注"
-        warnings.append(f"实际税负率 {rate:.4f} 低于预警值 {bench:.4f} 的 90%，建议复核。")
+        warnings.append(f"实际税负率 {rate:.4f} 低于预警值 {bench:.4f} 的 {VAT_WATCH_RATIO:.0%}，建议复核。")
     else:
         level = "正常"
     return ToolResult(
@@ -107,11 +130,15 @@ def assess_vat_burden(vat_paid, revenue, benchmark=None, industry=None) -> ToolR
         inputs=dict(vat_paid=vat_paid, revenue=revenue, benchmark=bench, industry=industry),
         details=dict(actual_rate=rate, benchmark=bench, deviation=round(deviation, 4)),
         warnings=warnings,
-        notes="低于预警值 70% 判为高风险；70%~90% 为关注；否则正常。行业基准为示例值。",
+        notes=f"低于预警值 {VAT_HIGH_RISK_RATIO:.0%} 判为高风险；{VAT_HIGH_RISK_RATIO:.0%}~{VAT_WATCH_RATIO:.0%} 为关注；否则正常。行业基准为示例值。",
     )
 
 
-def assess_income_tax_burden(income_tax_paid, pre_tax_profit, benchmark=None) -> ToolResult:
+def assess_income_tax_burden(
+    income_tax_paid: float,
+    pre_tax_profit: float,
+    benchmark: float | None = None,
+) -> ToolResult:
     """企业所得税税负率预警。
 
     用途：以所得税税负率（应纳所得税额 ÷ 利润总额）评估盈利企业的所得税负担合理性。
@@ -122,7 +149,7 @@ def assess_income_tax_burden(income_tax_paid, pre_tax_profit, benchmark=None) ->
         benchmark: 所得税税负率预警基准（默认 0.25，即法定税率附近）。
 
     Returns:
-        ToolResult: ``value``=风险标记；``details``=实际税负率。
+        ToolResult: ``value``=风险标记（"正常"/"高风险"/"不适用"）；``details``=实际税负率。
     """
     tax = require_non_negative("income_tax_paid", income_tax_paid)
     profit = require_number("pre_tax_profit", pre_tax_profit)
@@ -139,7 +166,7 @@ def assess_income_tax_burden(income_tax_paid, pre_tax_profit, benchmark=None) ->
     rate = tax / profit
     deviation = (rate - bench) / bench
     warnings: list[str] = []
-    if rate < bench * 0.6:
+    if rate < bench * INCOME_TAX_HIGH_RISK_RATIO:
         level = "高风险"
         warnings.append(f"所得税税负率 {rate:.4f} 显著低于基准 {bench:.4f}，关注纳税调整是否充分。")
     else:
@@ -151,21 +178,21 @@ def assess_income_tax_burden(income_tax_paid, pre_tax_profit, benchmark=None) ->
         inputs=dict(income_tax_paid=income_tax_paid, pre_tax_profit=pre_tax_profit, benchmark=bench),
         details=dict(actual_rate=round(rate, 6), benchmark=bench, deviation=round(deviation, 4)),
         warnings=warnings,
-        notes="显著低于基准 60% 判为高风险。基准默认 0.25（可覆盖）。",
+        notes=f"显著低于基准 {INCOME_TAX_HIGH_RISK_RATIO:.0%} 判为高风险。基准默认 0.25（可覆盖）。",
     )
 
 
 def calc_tax_adjustment(
-    revenue,
-    wages,
-    entertainment,
-    advertising,
-    welfare,
-    union_fund,
-    education_fund,
-    nonfin_interest_expense=None,
-    fin_interest_rate=None,
-    nonfin_loan_principal=None,
+    revenue: float,
+    wages: float,
+    entertainment: float,
+    advertising: float,
+    welfare: float,
+    union_fund: float,
+    education_fund: float,
+    nonfin_interest_expense: float | None = None,
+    fin_interest_rate: float | None = None,
+    nonfin_loan_principal: float | None = None,
     advertising_ratio: float = 0.15,
 ) -> ToolResult:
     """分税种纳税调整测算（企业所得税税前扣除限额调增）。
@@ -214,6 +241,7 @@ def calc_tax_adjustment(
 
     # 非金融借款利息
     int_adj = 0.0
+    cap = 0.0
     if nonfin_interest_expense is not None:
         if fin_interest_rate is None or nonfin_loan_principal is None:
             raise ToolValidationError("非金融借款利息调整需同时提供 fin_interest_rate 与 nonfin_loan_principal")
@@ -246,10 +274,10 @@ def calc_tax_adjustment(
 
 
 def scan_invoice_risk(
-    invoice_total,
-    revenue,
-    top_amount_ratio: float = None,
-    threshold_ratio: float = 0.8,
+    invoice_total: float,
+    revenue: float,
+    top_amount_ratio: float | None = None,
+    threshold_ratio: float = TOP_AMOUNT_THRESHOLD,
 ) -> ToolResult:
     """发票风险基础扫描（比率法）。
 
@@ -268,18 +296,17 @@ def scan_invoice_risk(
     rev = require_positive("revenue", revenue)
     ratio = inv / rev
     warnings: list[str] = []
-    if ratio > 1.2:
+    level = "正常"
+    if ratio > INVOICE_HIGH_RATIO:
         level = "关注"
         warnings.append(f"开票金额/收入比 {ratio:.2f} 偏高，关注是否存在虚增收入或提前开票。")
-    elif ratio < 0.3:
+    elif ratio < INVOICE_LOW_RATIO:
         level = "关注"
         warnings.append(f"开票金额/收入比 {ratio:.2f} 偏低，关注是否隐匿销售收入。")
-    else:
-        level = "正常"
     if top_amount_ratio is not None:
         tar = require_number("top_amount_ratio", top_amount_ratio)
         if tar > threshold_ratio:
-            level = "高风险" if level != "高风险" else level
+            level = "高风险"
             warnings.append(f"顶额发票金额占比 {tar:.2f} 超过阈值 {threshold_ratio}，存在集中开票风险。")
     return ToolResult(
         method_id="MTH-09-002",
@@ -293,9 +320,9 @@ def scan_invoice_risk(
 
 
 def tax_health_score(
-    vat_burden_level: str = None,
-    income_tax_level: str = None,
-    invoice_level: str = None,
+    vat_burden_level: str | None = None,
+    income_tax_level: str | None = None,
+    invoice_level: str | None = None,
     adjustment_ratio: float = 0.0,
 ) -> ToolResult:
     """税务健康度综合评分（0~100）。
@@ -303,7 +330,7 @@ def tax_health_score(
     用途：将多项税务风险信号汇总为单一健康度分数与等级，便于排序与跟踪。
 
     Args:
-        vat_burden_level: 增值税税负预警结果（"正常"/"关注"/"高风险"）。
+        vat_burden_level: 增值税税负预警结果（"正常"/"关注"/"高风险"/"不适用"）。
         income_tax_level: 所得税税负预警结果（同上）。
         invoice_level: 发票风险扫描结果（同上）。
         adjustment_ratio: 纳税调增额/利润总额（或收入）的比值（0~1，越大越差）。
@@ -311,6 +338,16 @@ def tax_health_score(
     Returns:
         ToolResult: ``value``=健康度分数(0~100)；``details``=各项扣分与等级。
     """
+    for name, level in (
+        ("增值税税负", vat_burden_level),
+        ("所得税税负", income_tax_level),
+        ("发票风险", invoice_level),
+    ):
+        if level not in _VALID_LEVELS:
+            raise ToolValidationError(
+                f"{name} 取值应为 正常/关注/高风险/不适用，收到：{level!r}"
+            )
+
     score = 100.0
     deductions = {}
     for name, level in (
@@ -319,17 +356,15 @@ def tax_health_score(
         ("发票风险", invoice_level),
     ):
         if level == "高风险":
-            deductions[name] = 25
-            score -= 25
+            deductions[name] = SCORE_DEDUCT_HIGH
+            score -= SCORE_DEDUCT_HIGH
         elif level == "关注":
-            deductions[name] = 10
-            score -= 10
-        elif level == "不适用":
-            deductions[name] = 0
+            deductions[name] = SCORE_DEDUCT_WATCH
+            score -= SCORE_DEDUCT_WATCH
         else:
             deductions[name] = 0
     adj = require_number("adjustment_ratio", adjustment_ratio)
-    adj_deduction = min(20.0, max(0.0, adj * 100))
+    adj_deduction = min(SCORE_DEDUCT_ADJ_MAX, max(0.0, adj * 100))
     score -= adj_deduction
     deductions["纳税调整"] = round(adj_deduction, 2)
     score = max(0.0, round(score, 1))
@@ -343,7 +378,7 @@ def tax_health_score(
             invoice_level=invoice_level, adjustment_ratio=adjustment_ratio,
         ),
         details=dict(deductions=deductions, grade=grade),
-        notes="分数越高越健康；高风险项各扣 25，关注项各扣 10，纳税调整按比例最高扣 20。",
+        notes=f"分数越高越健康；高风险项各扣 {SCORE_DEDUCT_HIGH}，关注项各扣 {SCORE_DEDUCT_WATCH}，纳税调整按比例最高扣 {SCORE_DEDUCT_ADJ_MAX:.0f}。",
     )
 
 

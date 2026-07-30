@@ -14,7 +14,7 @@
 
 快速开始::
 
-    from mth_tools import financial_warning as fw
+    from tools import financial_warning as fw
     r = fw.calc_altman_z(working_capital=1200, retained_earnings=800, ebit=600,
                          market_value_equity=5000, total_liabilities=3000,
                          sales=9000, total_assets=10000)
