@@ -10,8 +10,10 @@
 
 from __future__ import annotations
 
+import math
+
 from . import financial_warning as fw, tax_tools as tt, valuation as va, consolidation as co
-from .base import ToolValidationError
+from .base import ToolValidationError, require_in_range
 
 
 def test_financial_warning_happy():
@@ -126,6 +128,85 @@ def test_consolidation_validation():
         raise AssertionError("nci_ratio=1.5 应抛 ToolValidationError")
     except ToolValidationError:
         pass
+
+
+# ---------- P2 低优先级项回归（F-09 / F-11 / PKG-05 / F-12 / VAL-02 / CON-01） ----------
+
+def test_p2_f09_band_parameter():
+    # band 参数可覆盖，不确定区宽度随阈值/模型变化
+    r_default = fw.assess_f_score(0.05, threshold=0.0274)
+    r_wide = fw.assess_f_score(0.05, threshold=0.0274, band=0.5)
+    assert r_default.value in ("安全", "风险", "不确定")
+    assert r_default.details["band"] == (round(0.0274 - 0.0775, 4), round(0.0274 + 0.0775, 4))
+    assert r_wide.details["band"] == (round(0.0274 - 0.5, 4), round(0.0274 + 0.5, 4))
+    # 取落入默认"风险"但宽 band"不确定"区的值，分类应不同
+    f_gap = -0.2
+    assert fw.assess_f_score(f_gap, threshold=0.0274).value == "风险"
+    assert fw.assess_f_score(f_gap, threshold=0.0274, band=0.5).value == "不确定"
+
+
+def test_p2_f11_altman_convergence():
+    # 三个 Altman 变体经私有 _weighted_altman 收敛后，正常场景均返回有限 Z 值
+    z = fw.calc_altman_z(working_capital=1200, retained_earnings=800, ebit=600,
+                         market_value_equity=5000, total_liabilities=3000,
+                         sales=9000, total_assets=10000)
+    zp = fw.calc_altman_z_private(working_capital=1200, retained_earnings=800, ebit=600,
+                                 book_value_equity=5000, total_liabilities=3000,
+                                 sales=9000, total_assets=10000)
+    zn = fw.calc_altman_z_nonmanufacturing(working_capital=1200, retained_earnings=800, ebit=600,
+                                           book_value_equity=5000, total_liabilities=3000,
+                                           total_assets=10000)
+    for r in (z, zp, zn):
+        assert r.value is not None and math.isfinite(r.value), f"{r.method_name} 应返回有限 Z"
+    # 比率 details 已 round 至 6 位
+    assert all(abs(r.details[k]) < 1e3 for r in (z, zp) for k in ("X1", "X2", "X3", "X4", "X5"))
+
+
+def test_p2_pkg05_require_in_range_guard():
+    # low > high 应抛异常（调用方配置错误）
+    try:
+        require_in_range("x", 5, low=10, high=1)
+        raise AssertionError("low>high 应抛 ToolValidationError")
+    except ToolValidationError:
+        pass
+    # 正常区间仍可用
+    assert require_in_range("x", 5, low=1, high=10) == 5
+
+
+def test_p2_f12_dcf_terminal_year_validation():
+    # terminal_year < 1 应抛异常
+    try:
+        va.calc_dcf([100, 100, 100], discount_rate=0.1, terminal_year=0)
+        raise AssertionError("terminal_year=0 应抛 ToolValidationError")
+    except ToolValidationError:
+        pass
+    # 浮点整数应被接受并转 int
+    r = va.calc_dcf([100, 100, 100], discount_rate=0.1, terminal_value=500, terminal_year=3.0)
+    assert r.value > 0
+
+
+def test_p2_val02_wacc_overweight_raises():
+    # 权益+债务权重 > 1 应抛异常（资本来源超额配置）
+    try:
+        va.calc_wacc(weight_equity=0.7, cost_equity=0.09, weight_debt=0.7,
+                     cost_debt=0.05, tax_rate=0.25)
+        raise AssertionError("we+wd>1 应抛 ToolValidationError")
+    except ToolValidationError:
+        pass
+    # 轻微不足 1 仅 warning
+    w = va.calc_wacc(weight_equity=0.6, cost_equity=0.09, weight_debt=0.3,
+                     cost_debt=0.05, tax_rate=0.25)
+    assert any("≠ 1" in s for s in w.warnings)
+
+
+def test_p2_con01_negative_gross_margin():
+    # 收入 < 成本（负毛利）应预警
+    r = co.build_intercompany_revenue_cost(revenue=100, cost=150, unsold_profit=10)
+    assert any("毛利为负" in s for s in r.warnings)
+    assert r.details["gross_margin"] < 0
+    # 正常情形无此预警
+    r2 = co.build_intercompany_revenue_cost(revenue=150, cost=100, unsold_profit=10)
+    assert not any("毛利为负" in s for s in r2.warnings)
 
 
 def _run_all():

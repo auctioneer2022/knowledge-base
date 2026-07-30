@@ -177,6 +177,10 @@ def build_intercompany_revenue_cost(revenue: float, cost: float, unsold_profit: 
     rev = require_non_negative("revenue", revenue)
     cst = require_non_negative("cost", cost)
     up = require_non_negative("unsold_profit", unsold_profit)
+    gross_margin = round(rev - cst, 4)
+    warnings: list[str] = []
+    if gross_margin < 0:
+        warnings.append(f"内部交易毛利为负（收入 {rev} < 成本 {cst}），请核查内部定价或入账数据。")
     entries = [OffsetEntry(
         summary="内部交易收入成本抵销",
         debits=[("营业收入", round(rev, 2))],
@@ -193,7 +197,8 @@ def build_intercompany_revenue_cost(revenue: float, cost: float, unsold_profit: 
         method_name="内部交易抵销",
         value=entries,
         inputs=dict(revenue=revenue, cost=cost, unsold_profit=unsold_profit),
-        details=dict(gross_margin=round(rev - cst, 4), unsold_profit=round(up, 4)),
+        details=dict(gross_margin=gross_margin, unsold_profit=round(up, 4)),
+        warnings=warnings,
         notes="未实现损益 = 内部毛利 × 期末未售比例；需结合 NCI 分摊。",
     )
 

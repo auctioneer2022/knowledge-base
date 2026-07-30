@@ -98,7 +98,12 @@ def require_in_range(
     low_inclusive: bool = True,
     high_inclusive: bool = True,
 ) -> float:
-    """要求入参落在 [low, high]（含边界可配）区间内。"""
+    """要求入参落在 [low, high]（含边界可配）区间内。
+
+    边界：``low`` 应不大于 ``high``，否则视为调用方配置错误并抛异常。
+    """
+    if low > high:
+        raise ToolValidationError(f"参数区间配置错误：low={low} 不应大于 high={high}")
     v = require_number(name, value)
     if low_inclusive and v < low:
         raise ToolValidationError(f"参数「{name}」={v} 不应低于 {low}")

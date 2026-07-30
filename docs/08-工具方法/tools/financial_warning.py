@@ -53,15 +53,15 @@ def _compute_ratios(
     eq = require_number("equity_measure", equity_measure)
 
     warnings: list[str] = []
-    x1 = wc / ta
-    x2 = re_ / ta
-    x3 = ebit_v / ta
+    x1 = round(wc / ta, 6)
+    x2 = round(re_ / ta, 6)
+    x3 = round(ebit_v / ta, 6)
     if tl == 0:
         x4 = float("inf")
         warnings.append("总负债为 0，权益倍数(X4)视为无穷，结果偏向安全（模型对无负债主体失真）。")
     else:
-        x4 = eq / tl
-    x5 = (sales_v / ta) if include_sales else None
+        x4 = round(eq / tl, 6)
+    x5 = round(sales_v / ta, 6) if include_sales else None
     return {"X1": x1, "X2": x2, "X3": x3, "X4": x4, "X5": x5, "warnings": warnings}
 
 
@@ -79,6 +79,11 @@ def _none_result(method_name: str, notes: str, x: dict, r: dict, inputs: dict) -
         ],
         notes=notes,
     )
+
+
+def _weighted_altman(ratios: dict, weights: dict) -> float:
+    """按权重对 X 比率加权求和（供三个 calc_altman_* 复用，收敛重复公式）。"""
+    return sum(weights[k] * ratios[k] for k in weights)
 
 
 def calc_altman_z(
@@ -122,7 +127,7 @@ def calc_altman_z(
                 total_liabilities=total_liabilities, sales=sales, total_assets=total_assets,
             ),
         )
-    z = 1.2 * x["X1"] + 1.4 * x["X2"] + 3.3 * x["X3"] + 0.6 * x["X4"] + 1.0 * x["X5"]
+    z = _weighted_altman(x, {"X1": 1.2, "X2": 1.4, "X3": 3.3, "X4": 0.6, "X5": 1.0})
     return ToolResult(
         method_id="MTH-02-004",
         method_name="Altman Z-Score(原始)",
@@ -172,7 +177,7 @@ def calc_altman_z_private(
                 total_liabilities=total_liabilities, sales=sales, total_assets=total_assets,
             ),
         )
-    z = 0.717 * x["X1"] + 0.847 * x["X2"] + 3.107 * x["X3"] + 0.420 * x["X4"] + 0.998 * x["X5"]
+    z = _weighted_altman(x, {"X1": 0.717, "X2": 0.847, "X3": 3.107, "X4": 0.420, "X5": 0.998})
     return ToolResult(
         method_id="MTH-02-004",
         method_name="Altman Z'-Score(私营)",
@@ -223,7 +228,7 @@ def calc_altman_z_nonmanufacturing(
                 total_liabilities=total_liabilities, total_assets=total_assets,
             ),
         )
-    z = 6.56 * x["X1"] + 3.26 * x["X2"] + 6.72 * x["X3"] + 1.05 * x["X4"]
+    z = _weighted_altman(x, {"X1": 6.56, "X2": 3.26, "X3": 6.72, "X4": 1.05})
     return ToolResult(
         method_id="MTH-02-004",
         method_name="Altman Z''-Score(非制造)",
@@ -298,7 +303,7 @@ def calc_f_score(
     )
 
 
-def assess_f_score(f_value: float, threshold: float = 0.0274) -> ToolResult:
+def assess_f_score(f_value: float, threshold: float = 0.0274, band: float = 0.0775) -> ToolResult:
     """将 F 分数归类为安全/风险区。
 
     用途：将连续的 F 值翻译为可读的风险区间。
@@ -306,29 +311,32 @@ def assess_f_score(f_value: float, threshold: float = 0.0274) -> ToolResult:
     Args:
         f_value: F 分数（来自 :func:`calc_f_score`）。
         threshold: 临界值（默认 0.0274，即周首华等原研究；扩展样本应用可传 0.3346）。
+        band: 不确定区半宽（默认 0.0775，对应 threshold=0.0274；若 threshold 取 0.3346
+            应同步放大，例如传 0.5）。不确定区为 ``[threshold-band, threshold+band]``。
 
     Returns:
         ToolResult: ``value``=风险等级（"安全"/"风险"/"不确定"）；
-            ``details``=与阈值比较结果。
+            ``details``=与阈值比较结果及不确定区边界。
     """
     f = require_number("f_value", f_value)
     thr = require_number("threshold", threshold)
+    b = require_non_negative("band", band)
     if f > thr:
         level = "安全"
         cmp = f"F={f:.4f} > 临界值 {thr}"
-    elif f < thr - 0.0775:
+    elif f < thr - b:
         level = "风险"
-        cmp = f"F={f:.4f} < 临界值 {thr}（且低于不确定区下界 {thr - 0.0775:.4f}）"
+        cmp = f"F={f:.4f} < 临界值 {thr}（且低于不确定区下界 {thr - b:.4f}）"
     else:
         level = "不确定"
-        cmp = f"F={f:.4f} 处于临界值 {thr} 的 ±0.0775 不确定区"
+        cmp = f"F={f:.4f} 处于临界值 {thr} 的 ±{b} 不确定区"
     return ToolResult(
         method_id="MTH-02-004",
         method_name="F分数风险判定",
         value=level,
-        inputs=dict(f_value=f_value, threshold=threshold),
-        details=dict(comparison=cmp, threshold=thr, band=(thr - 0.0775, thr + 0.0775)),
-        notes=f"临界值 {thr}；±0.0775 为不确定区（该带宽随 threshold 变化）。",
+        inputs=dict(f_value=f_value, threshold=threshold, band=band),
+        details=dict(comparison=cmp, threshold=thr, band=(round(thr - b, 4), round(thr + b, 4))),
+        notes=f"临界值 {thr}；±{b} 为不确定区（该带宽随 threshold/模型变化，可经 band 参数调整）。",
     )
 
 

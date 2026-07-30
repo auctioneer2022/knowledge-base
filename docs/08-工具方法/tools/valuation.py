@@ -77,6 +77,10 @@ def calc_wacc(
         raise ToolValidationError("tax_rate 应在 [0,1]")
     wacc = we * ce + wd * cd * (1 - tr)
     warnings = []
+    if we + wd > 1 + WACC_WEIGHT_TOLERANCE:
+        raise ToolValidationError(
+            f"权益权重+债务权重={we + wd:.4f} 不应超过 1（资本来源超额配置），请核查权重。"
+        )
     if abs(we + wd - 1.0) > WACC_WEIGHT_TOLERANCE:
         warnings.append(f"权益权重+债务权重={we + wd:.4f} ≠ 1，已按给定权重直接计算（未归一化）。")
     return ToolResult(
@@ -121,6 +125,11 @@ def calc_dcf(
         g = require_number("terminal_growth", terminal_growth)
         if g >= r:
             raise ToolValidationError("永续增长率 g 必须小于折现率 r，否则模型不收敛。")
+    if terminal_year is not None:
+        ty = require_number("terminal_year", terminal_year)
+        if not ty >= 1:
+            raise ToolValidationError(f"terminal_year 应为正整数（>=1），收到：{terminal_year}")
+        terminal_year = int(ty)
     fcf = [require_non_negative("free_cash_flows[i]", v) for v in free_cash_flows]
     pv_list = []
     for t, cf in enumerate(fcf, start=1):
